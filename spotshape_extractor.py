@@ -1,5 +1,6 @@
 import numpy as np
 import os.path, sys, time
+from scipy.optimize import curve_fit
 from matplotlib import pyplot as plt
 from PIL import Image, ImageDraw
 from CalculateClass_ForQA import CalculatePos
@@ -11,6 +12,14 @@ def GrayScale(arr):
     arr_greyscale = 1 * arr * 255 / arr.max()
     
     return arr_greyscale
+
+def Gauss1D(x, *p):
+    A, mu, sigma = p
+    return A * np.exp(-(x - mu)**2 / (2. * sigma**2))
+
+
+def FindLYNXFile(date, gantry, energy):
+    pass
 
 
 def LoadFromLYNXFile(inputf, GetSensor=False):
@@ -73,7 +82,7 @@ def Calculate_Spots_GantryAngleDependent(dataarray, xarray, yarray, option='fift
     LeftLowerCorner_Dict = {"SpotMitte" : [250,250], "SpotUntenLinks" : [10,10], "SpotUntenRechts" : [10,490], "SpotObenLinks" : [490,10], "SpotObenRechts" : [490,490], "SpotLinks" : [250,10], "SpotRechts" : [250,490], "SpotUnten" : [10,250], "SpotOben" : [490,250]}
     xarray_dict = {"SpotMitte" : xarray[250:350], "SpotUntenLinks" : xarray[10:110], "SpotUntenRechts" : xarray[490:590], "SpotObenLinks" : xarray[10:110], "SpotObenRechts" : xarray[490:590], "SpotLinks" : xarray[10:110], "SpotRechts" : xarray[490:590], "SpotUnten" : xarray[250:350], "SpotOben" : xarray[250:350]}
     yarray_dict = {"SpotMitte" : yarray[250:350], "SpotUntenLinks" : yarray[10:110], "SpotUntenRechts" : yarray[10:110], "SpotObenLinks" : yarray[490:590], "SpotObenRechts" : yarray[490:590], "SpotLinks" : yarray[250:350], "SpotRechts" : yarray[250:350], "SpotUnten" : yarray[10:110], "SpotOben" : yarray[490:590]}
-    
+
     # iterate through QA spots
     for key in SubDoseArray_Dict:
         Spot = SubDoseArray_Dict[key]
@@ -106,7 +115,35 @@ def Calculate_Spots_GantryAngleDependent(dataarray, xarray, yarray, option='fift
                 KeyNames.append(key) 
             
             elif option == 'gauss':
-                pass
+                # obtain integrated 1D profiles by summation
+                x_profile_integrated = Spot.sum(axis=0)
+                max_index_x, max_index_y = int(np.mean(np.argmax(Spot, axis=0))), int(np.mean(np.argmax(Spot, axis=1)))
+                # x_profile_integrated = Spot[:, max_index_x]  # that would mean exact Gaussian fitting through spot maximum
+                x_axis = [(px + 1) * 0.5 - 0.25 for px in range(len(x_profile_integrated))]  # mm
+                y_profile_integrated = Spot.sum(axis=1)
+                # y_profile_integrated = Spot[:, max_index_y]
+                y_axis = [(px + 1) * 0.5 - 0.25 for px in range(len(y_profile_integrated))]
+                
+                # fit 1D Gaussian with initial guess parameters
+                popt_x, _ = curve_fit(Gauss1D, x_axis, x_profile_integrated, p0=[1., 0., 1.])  # popt contains optimization parameters A, mu, sigma
+                popt_y, _ = curve_fit(Gauss1D, y_axis, y_profile_integrated, p0=[1., 0., 1.])
+
+                # calculate FWHM from sigma
+                const = 2 * np.sqrt(2 * np.log(2))
+                x_fwhm = const * abs(popt_x[-1])
+                y_fwhm = const * abs(popt_y[-1])
+                
+                # plt.plot(x_axis, x_profile_integrated, 'o', color='tab:blue', ms=2)
+                # plt.plot(x_axis, Gauss1D(x_axis, *popt_x), color='tab:blue')
+                # plt.plot(y_axis, y_profile_integrated, 'o', color='tab:orange', ms=2)
+                # plt.plot(y_axis, Gauss1D(y_axis, *popt_y), color='tab:orange')
+                # plt.show()
+                # return None
+
+                SpotPos_Dict[key] = [np.average(yarray[LeftLowerCorner_Dict[key][1]+Spot_MaxPos[1]]), np.average(xarray[LeftLowerCorner_Dict[key][0] + Spot_MaxPos[0]])]
+                Intensity_Dict[key] = Intensity
+                FWHM_Dict[key] = [x_fwhm, y_fwhm]
+                KeyNames.append(key)
     
     return FWHM_Dict, SpotPos_Dict, Intensity_Dict, KeyNames
 
@@ -121,7 +158,7 @@ def AnalyzeSpotsGantryAngleDependent(path):
     if flip_y == "j":
         arr_norm=array_norm[::-1,:]
     
-    FWHM_Dict, SpotPos_Dict, Intensity_Dict, KeyNames = Calculate_Spots_GantryAngleDependent(arr_norm, x_cl, y_il, option='fifty')
+    FWHM_Dict, SpotPos_Dict, Intensity_Dict, KeyNames = Calculate_Spots_GantryAngleDependent(arr_norm, x_cl, y_il, option='gauss')
     
     # KeyNames in same order as in tables:
     KeyNames = ("SpotMitte", "SpotUntenLinks", "SpotUntenRechts", "SpotObenLinks", "SpotObenRechts", "SpotLinks", "SpotRechts", "SpotUnten", "SpotOben")
@@ -130,7 +167,6 @@ def AnalyzeSpotsGantryAngleDependent(path):
         x_pos, y_pos = SpotPos_Dict[KeyNames[i]][0], SpotPos_Dict[KeyNames[i]][1]
         # spot fwhm
         x_fwhm, y_fwhm = FWHM_Dict[KeyNames[i]][0], FWHM_Dict[KeyNames[i]][1]
-        print(x_fwhm, y_fwhm)
         # spot intensity
         intensity = Intensity_Dict[KeyNames[i]]
 
