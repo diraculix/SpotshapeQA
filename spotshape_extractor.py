@@ -1,8 +1,7 @@
+import os
 import numpy as np
-import os.path, sys, time
+from pandas import to_datetime
 from scipy.optimize import curve_fit
-from matplotlib import pyplot as plt
-from PIL import Image, ImageDraw
 from CalculateClass_ForQA import CalculatePos
 from NormalizeClass_ForQA import NormalizeCenter100
 
@@ -13,13 +12,34 @@ def GrayScale(arr):
     
     return arr_greyscale
 
+
 def Gauss1D(x, *p):
     A, mu, sigma = p
     return A * np.exp(-(x - mu)**2 / (2. * sigma**2))
 
 
-def FindLYNXFile(date, gantry, energy):
-    pass
+def FindLYNXFile(day, gantry, energy):
+    init_dir = r'Q:\PHYSIK\PROTONEN\QA\QA_Halbjaehrlich\Spotmessungen_winkelabhaengig'
+    gstring = 'g' + str(int(gantry)).zfill(3)
+    estring = str(int(np.floor(energy))) + 'mev'
+    day = to_datetime(day).date()
+
+    for root, _, files in os.walk(init_dir):
+        for file in files:
+            if file.endswith('.txt'):
+                modified = to_datetime(os.path.getmtime(os.path.join(root, file)), unit='s').date()
+                if modified == day:
+                    lowerfile = file.lower()
+                    if lowerfile.__contains__(gstring):
+                        if energy == 226.7:
+                            if lowerfile.__contains__('226p7') or lowerfile.__contains__('226_7'):
+                                return(os.path.join(root, file))
+                        else:
+                            if lowerfile.__contains__(estring):
+                                return(os.path.join(root, file))
+    
+    print(day, gantry, energy, 'not found')
+    return None
 
 
 def LoadFromLYNXFile(inputf, GetSensor=False):
@@ -148,7 +168,7 @@ def Calculate_Spots_GantryAngleDependent(dataarray, xarray, yarray, option='fift
     return FWHM_Dict, SpotPos_Dict, Intensity_Dict, KeyNames
 
 
-def AnalyzeSpotsGantryAngleDependent(path):
+def AnalyzeSpotsGantryAngleDependent(path, option):
     # analyze spots extracted from LYNX output file    
     array_norm,x_cl,y_il, d_cl, d_il, flip_x, flip_y= LoadFromLYNXFile(path)
 
@@ -158,10 +178,11 @@ def AnalyzeSpotsGantryAngleDependent(path):
     if flip_y == "j":
         arr_norm=array_norm[::-1,:]
     
-    FWHM_Dict, SpotPos_Dict, Intensity_Dict, KeyNames = Calculate_Spots_GantryAngleDependent(arr_norm, x_cl, y_il, option='gauss')
+    FWHM_Dict, SpotPos_Dict, Intensity_Dict, KeyNames = Calculate_Spots_GantryAngleDependent(arr_norm, x_cl, y_il, option=option)
     
     # KeyNames in same order as in tables:
     KeyNames = ("SpotMitte", "SpotUntenLinks", "SpotUntenRechts", "SpotObenLinks", "SpotObenRechts", "SpotLinks", "SpotRechts", "SpotUnten", "SpotOben")
+    x_fwhm_arr, y_fwhm_arr = [], []
     for i in range(len(KeyNames)):
         # spot position
         x_pos, y_pos = SpotPos_Dict[KeyNames[i]][0], SpotPos_Dict[KeyNames[i]][1]
@@ -170,10 +191,21 @@ def AnalyzeSpotsGantryAngleDependent(path):
         # spot intensity
         intensity = Intensity_Dict[KeyNames[i]]
 
-        # ... append data to array/dataframe ...                    
+        x_fwhm_arr.append(x_fwhm), y_fwhm_arr.append(y_fwhm)    
     
-    print('Exit code 0')
+    return x_fwhm_arr, y_fwhm_arr
+
 
 if __name__ == '__main__':
     testfile = r'Q:\PHYSIK\PROTONEN\QA\QA_Halbjaehrlich\Spotmessungen_winkelabhaengig\2023-03\Spots_G000_100MeV_2023-03-14.txt'
-    AnalyzeSpotsGantryAngleDependent(testfile)
+    AnalyzeSpotsGantryAngleDependent(testfile, option='gauss')
+    # df_path = r'N:\fs4-HPRT\HPRT-Docs\Lukas\BA_Anna_Leimbach\QA_2017-2023_records_data_rotated.csv'
+    # df = pd.read_csv(df_path, dtype={'FRACTION_ID':str})
+    # for fx in df.FRACTION_ID.drop_duplicates():
+    #     fx_df = df.loc[df.FRACTION_ID == fx]
+    #     for beam in fx_df.BEAM_ID.drop_duplicates():
+    #         beam_df = fx_df.loc[fx_df.BEAM_ID == beam]
+    #         g = beam_df.GANTRY_ANGLE.iloc[0]
+    #         e = beam_df['LAYER_ENERGY(MeV)'].iloc[0]
+    #         FindLYNXFile(fx, g, e)
+
